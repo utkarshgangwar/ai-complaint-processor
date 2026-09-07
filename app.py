@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import math
+import time
 from pathlib import Path
 from src.config import CONFIG, BASE_DIR
 from src.pipeline import BatchProcessingPipeline
@@ -23,6 +25,29 @@ structured_dir = BASE_DIR / CONFIG.get("paths", {}).get("structured_data_dir", "
 emails_dir = BASE_DIR / CONFIG.get("paths", {}).get("customer_emails_dir", "output/customer_emails")
 summaries_dir = BASE_DIR / CONFIG.get("paths", {}).get("case_summaries_dir", "output/case_summaries")
 
+# Tab Constants
+TAB_ALL = "📊 Consolidated Report"
+TAB_ESC = "🚨 Escalations Required"
+TAB_ACT = "⏳ Open & Active Cases"
+TAB_INS = "🔍 Document Inspector"
+TAB_OPTIONS = [TAB_ALL, TAB_ESC, TAB_ACT, TAB_INS]
+
+# Initialize Session State
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = TAB_ALL
+if "selected_doc" not in st.session_state:
+    st.session_state.selected_doc = None
+if "search_query" not in st.session_state:
+    st.session_state.search_query = ""
+if "current_page" not in st.session_state:
+    st.session_state.current_page = 1
+if "page_size" not in st.session_state:
+    st.session_state.page_size = 5
+
+def open_inspector(filename):
+    st.session_state.selected_doc = filename
+    st.session_state.active_tab = TAB_INS
+
 # Sidebar - Ingestion & Trigger Controls
 with st.sidebar:
     st.header("1. Ingestion Controls")
@@ -39,7 +64,6 @@ with st.sidebar:
                 f.write(file.getbuffer())
         st.success(f"Saved {len(uploaded_files)} file(s) to {data_dir.name}/")
 
-    # Display current files
     existing_files = [f.name for f in data_dir.iterdir() if f.is_file()]
     st.markdown(f"**Files currently in `{data_dir.name}/`:** `{len(existing_files)}`")
     if existing_files:
@@ -68,12 +92,94 @@ if run_btn:
     status_text.success("Batch execution completed successfully!")
     progress_bar.empty()
 
+# Helper function to render paginated table with View buttons
+def render_paginated_table(df_subset, prefix_key):
+    if df_subset.empty:
+        st.info("No matching records found.")
+        return
+
+    # Pagination controls
+    col_size, col_info, col_prev, col_page, col_next = st.columns([2, 3, 1, 1.5, 1])
+    
+    with col_size:
+        page_size = st.selectbox(
+            "Rows per page:", 
+            [5, 10, 20], 
+            index=0, 
+            key=f"{prefix_key}_size_select"
+        )
+    
+    total_records = len(df_subset)
+    total_pages = max(1, math.ceil(total_records / page_size))
+    
+    # Ensure current page is valid for this subset
+    page_key = f"{prefix_key}_page_num"
+    if page_key not in st.session_state or st.session_state[page_key] > total_pages:
+        st.session_state[page_key] = 1
+
+    current_p = st.session_state[page_key]
+
+    with col_prev:
+        if st.button("◀ Prev", key=f"{prefix_key}_prev", disabled=(current_p <= 1)):
+            st.session_state[page_key] -= 1
+            st.rerun()
+
+    with col_page:
+        st.markdown(f"**Page {current_p} of {total_pages}**")
+
+    with col_next:
+        if st.button("Next ▶", key=f"{prefix_key}_next", disabled=(current_p >= total_pages)):
+            st.session_state[page_key] += 1
+            st.rerun()
+
+    with col_info:
+        start_idx = (current_p - 1) * page_size
+        end_idx = min(start_idx + page_size, total_records)
+        st.caption(f"Showing rows {start_idx + 1} to {end_idx} of {total_records}")
+
+    # Slice DataFrame for current page
+    page_df = df_subset.iloc[start_idx:end_idx]
+
+    st.markdown("---")
+    # Render table header
+    h_btn, h_file, h_name, h_cat, h_status, h_esc = st.columns([1.2, 2.5, 2, 2, 1.5, 1.5])
+    h_btn.markdown("**Action**")
+    h_file.markdown("**File Name**")
+    h_name.markdown("**Customer**")
+    h_cat.markdown("**Category**")
+    h_status.markdown("**Status**")
+    h_esc.markdown("**Escalate?**")
+    st.markdown("<hr style='margin:0.2rem 0'>", unsafe_allow_html=True)
+
+    # Render rows
+    for idx, row in page_df.iterrows():
+        c_btn, c_file, c_name, c_cat, c_status, c_esc = st.columns([1.2, 2.5, 2, 2, 1.5, 1.5])
+        with c_btn:
+            st.button("👁️ View", key=f"{prefix_key}_view_{row['file_name']}_{idx}", on_click=open_inspector, args=(row['file_name'],))
+        with c_file:
+            st.write(f"`{row['file_name']}`")
+        with c_name:
+            st.write(str(row.get('customer_name', 'N/A')))
+        with c_cat:
+            st.write(str(row.get('complaint_category', 'N/A')))
+        with c_status:
+            st.write(str(row.get('case_status', 'N/A')))
+        with c_esc:
+            esc_flag = row.get('escalation_required', False)
+            st.write("🚨 Yes" if esc_flag else "No")
+        st.markdown("<hr style='margin:0.2rem 0; opacity:0.3'>", unsafe_allow_html=True)
+
 # -------------------------------------------------------------
-# 1. TOP METRIC KPI CARDS (Always visible above tabs)
+# 1. TOP METRIC KPI CARDS & SEARCH
 # -------------------------------------------------------------
 if csv_path.exists():
     df_report = pd.read_csv(csv_path)
+    all_files = df_report["file_name"].tolist()
 
+    if not st.session_state.selected_doc or st.session_state.selected_doc not in all_files:
+        st.session_state.selected_doc = all_files[0] if all_files else None
+
+    # Global Metrics
     total_cases = len(df_report)
     escalations_needed = int(df_report["escalation_required"].sum()) if "escalation_required" in df_report else 0
     active_pending = int(df_report["case_status"].isin(["Open", "In Progress"]).sum()) if "case_status" in df_report else 0
@@ -87,85 +193,164 @@ if csv_path.exists():
 
     st.markdown("---")
 
-    # -------------------------------------------------------------
-    # 2. CATEGORIZED TABS
-    # -------------------------------------------------------------
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📊 Consolidated Report", 
-        "🚨 Escalations Required", 
-        "⏳ Open & Active Cases", 
-        "🔍 Document Inspector"
-    ])
+    # Debounced Search Input Bar
+    c_search, c_clear = st.columns([5, 1])
+    with c_search:
+        # Debouncing: wait for Enter or un-focus before re-executing full filter
+        raw_query = st.text_input(
+            "🔎 Search cases (Customer, File, Category, or Description):",
+            value=st.session_state.search_query,
+            placeholder="Type search terms and press Enter...",
+            key="search_input_widget"
+        )
+        if raw_query != st.session_state.search_query:
+            st.session_state.search_query = raw_query
+            st.rerun()
 
-    # Tab 1: All Documents
-    with tab1:
+    with c_clear:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("Clear Search", use_container_width=True):
+            st.session_state.search_query = ""
+            st.rerun()
+
+    # Filter DataFrame based on debounced search query
+    filtered_df = df_report.copy()
+    if st.session_state.search_query.strip():
+        q = st.session_state.search_query.strip().lower()
+        search_cols = ["file_name", "customer_name", "complaint_category", "issue_description"]
+        mask = False
+        for col in search_cols:
+            if col in filtered_df.columns:
+                mask = mask | filtered_df[col].astype(str).str.lower().str.contains(q, na=False)
+        filtered_df = filtered_df[mask]
+        st.caption(f"Found **{len(filtered_df)}** result(s) for query: `\"{st.session_state.search_query}\"`")
+
+    # -------------------------------------------------------------
+    # 2. PROGRAMMATIC TAB NAVIGATION BAR
+    # -------------------------------------------------------------
+    active_tab = st.radio(
+        "Navigation",
+        options=TAB_OPTIONS,
+        index=TAB_OPTIONS.index(st.session_state.active_tab),
+        horizontal=True,
+        label_visibility="collapsed",
+        key="active_tab"
+    )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # VIEW 1: All Documents (Paginated)
+    if active_tab == TAB_ALL:
         st.subheader("All Processed Documents")
-        st.dataframe(df_report, use_container_width=True)
         st.download_button(
             label="📥 Download final_report.csv",
-            data=df_report.to_csv(index=False).encode("utf-8"),
+            data=filtered_df.to_csv(index=False).encode("utf-8"),
             file_name="final_report.csv",
             mime="text/csv"
         )
+        render_paginated_table(filtered_df, prefix_key="all_cases")
 
-    # Tab 2: Escalations Only
-    with tab2:
+    # VIEW 2: Priority Escalation Queue (Paginated)
+    elif active_tab == TAB_ESC:
         st.subheader("🚨 Priority Escalation Queue")
         st.caption("Cases requiring managerial review, legal attention, or high-tier intervention.")
-        df_escalated = df_report[df_report["escalation_required"] == True]
-        if not df_escalated.empty:
-            st.dataframe(
-                df_escalated[["file_name", "customer_name", "complaint_category", "issue_description", "case_status"]], 
-                use_container_width=True
-            )
-        else:
-            st.success("No escalations detected in the current batch.")
+        df_escalated = filtered_df[filtered_df["escalation_required"] == True]
+        render_paginated_table(df_escalated, prefix_key="esc_cases")
 
-    # Tab 3: Open & Active Cases
-    with tab3:
+    # VIEW 3: Active / Pending Queue (Paginated)
+    elif active_tab == TAB_ACT:
         st.subheader("⏳ Active Work Queue")
         st.caption("Cases marked 'Open' or 'In Progress' where resolutions are still pending.")
-        df_active = df_report[df_report["case_status"].isin(["Open", "In Progress"])]
-        if not df_active.empty:
-            st.dataframe(
-                df_active[["file_name", "customer_name", "complaint_category", "case_status", "resolution_provided"]], 
-                use_container_width=True
-            )
-        else:
-            st.success("All cases are resolved or closed.")
+        df_active = filtered_df[filtered_df["case_status"].isin(["Open", "In Progress"])]
+        render_paginated_table(df_active, prefix_key="act_cases")
 
-    # Tab 4: Document Inspector
-    with tab4:
-        doc_names = df_report["file_name"].tolist()
-        selected_file = st.selectbox("Select document to inspect:", doc_names)
+    # VIEW 4: Document Inspector
+    elif active_tab == TAB_INS:
+        st.subheader("🔍 Document Inspector")
+        
+        selected_index = all_files.index(st.session_state.selected_doc) if st.session_state.selected_doc in all_files else 0
+        
+        selected_file = st.selectbox(
+            "Select document to inspect:", 
+            all_files, 
+            index=selected_index,
+            key="doc_selector"
+        )
+        st.session_state.selected_doc = selected_file
         
         if selected_file:
             stem = get_base_filename(selected_file)
             col_json, col_text = st.columns([1, 1])
 
+            # Left Column: Extracted Structured JSON
             with col_json:
                 st.subheader("Extracted Structured Data (JSON)")
                 json_file = structured_dir / f"{stem}.json"
                 if json_file.exists():
                     with open(json_file, "r", encoding="utf-8") as f:
-                        st.code(f.read(), language="json")
+                        json_content = f.read()
+                    
+                    st.download_button(
+                        label="📥 Download JSON",
+                        data=json_content,
+                        file_name=f"{stem}.json",
+                        mime="application/json",
+                        key=f"dl_json_{stem}"
+                    )
+                    st.code(json_content, language="json")
                 else:
                     st.warning("JSON file missing.")
 
+            # Right Column: Generated Email & Case Summary
             with col_text:
+                # 1. Customer Email
                 st.subheader("Generated Customer Response Email")
                 email_file = emails_dir / f"{stem}_email.txt"
                 if email_file.exists():
                     with open(email_file, "r", encoding="utf-8") as f:
-                        st.info(f.read())
+                        email_content = f.read()
+
+                    col_email_dl, col_email_pop = st.columns([1, 1])
+                    with col_email_dl:
+                        st.download_button(
+                            label="📥 Download Email (.txt)",
+                            data=email_content,
+                            file_name=f"{stem}_email.txt",
+                            mime="text/plain",
+                            key=f"dl_email_{stem}"
+                        )
+                    with col_email_pop:
+                        with st.popover("🔍 Open in Pop-up"):
+                            st.markdown("### Customer Response Email Draft")
+                            st.text_area("Email Content", value=email_content, height=300, disabled=True)
+
+                    st.info(email_content)
                 else:
                     st.warning("Email file missing.")
 
+                st.markdown("---")
+
+                # 2. Case Summary
                 st.subheader("Internal Management Case Summary")
                 summary_file = summaries_dir / f"{stem}_summary.txt"
                 if summary_file.exists():
                     with open(summary_file, "r", encoding="utf-8") as f:
-                        st.markdown(f.read())
+                        summary_content = f.read()
+
+                    col_sum_dl, col_sum_pop = st.columns([1, 1])
+                    with col_sum_dl:
+                        st.download_button(
+                            label="📥 Download Summary (.txt)",
+                            data=summary_content,
+                            file_name=f"{stem}_summary.txt",
+                            mime="text/plain",
+                            key=f"dl_sum_{stem}"
+                        )
+                    with col_sum_pop:
+                        with st.popover("🔍 Open in Pop-up"):
+                            st.markdown(summary_content)
+
+                    st.markdown(summary_content)
                 else:
                     st.warning("Summary file missing.")
 else:
