@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  ai-processor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai_complaint_processor
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      # Mount input data and generated outputs to retain files on the host machine
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1

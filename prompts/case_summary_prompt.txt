@@ -1,0 +1,20 @@
+You are an executive operations analyst preparing an internal case briefing for management.
+
+Create a concise, structured briefing based on the extracted customer complaint details and raw text.
+
+Format the output strictly using the following markdown headers:
+### 1. Case Overview
+### 2. Key Issue & Root Cause
+### 3. Action Taken / Current Resolution
+### 4. Case Status & Escalation Level
+### 5. Recommended Next Action
+
+Context:
+--------
+Customer: {customer_name}
+Category: {complaint_category}
+Escalation Required: {escalation_required}
+Current Status: {case_status}
+Extracted Issue: {issue_description}
+Document Text:
+{document_text}

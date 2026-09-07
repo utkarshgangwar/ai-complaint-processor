@@ -1,0 +1,29 @@
+app:
+  name: "AI Document Processing Pipeline"
+  version: "1.0.0"
+  log_level: "INFO"
+
+model:
+  # Supported providers: "openai" or "google"
+  provider: "openai"
+  model_name: "gpt-4o-mini"
+  temperature: 0.1
+  max_retries: 3
+  request_timeout: 60
+
+paths:
+  data_dir: "data"
+  logs_dir: "logs"
+  prompts_dir: "prompts"
+  output_base_dir: "output"
+  structured_data_dir: "output/structured_data"
+  customer_emails_dir: "output/customer_emails"
+  case_summaries_dir: "output/case_summaries"
+  final_report_csv: "output/final_report.csv"
+
+processing:
+  supported_extensions:
+    - ".pdf"
+    - ".docx"
+    - ".txt"
+  batch_concurrency_limit: 5

@@ -1,0 +1,15 @@
+CUSTOMER INCIDENT & COMPLAINT FORM
+Case Reference: INC-88219
+Date: 2026-08-14
+Customer Name: Rajesh Sharma
+Email: rajesh.sharma@example.com
+Phone: +91-9876543210
+Account ID: ACCT-90812
+
+Incident Details:
+I am writing to formally report an unauthorized recurring charge of Rs. 4,999 debited from my account on August 12, 2026, under invoice reference #INV-88219. I canceled this cloud storage subscription back in June 2026 and have the email confirmation receipt saved.
+
+Despite speaking to frontline phone support twice yesterday, no refund transaction reference was issued. If this amount is not reversed within 48 business hours, I will be forced to file a dispute with my banking ombudsman and seek consumer legal redressal.
+
+Action Taken So Far:
+Frontline support advised that the billing desk is reviewing the cancellation log. No refund processed yet. Case remains unresolved.
