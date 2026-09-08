@@ -1,3 +1,4 @@
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -21,3 +22,12 @@ def save_json_file(data: Dict[str, Any], destination_path: Path) -> None:
 def get_base_filename(file_path: str | Path) -> str:
     """Returns the stem (filename without extension) cleanly."""
     return Path(file_path).stem
+
+def compute_file_hash(file_path: str | Path) -> str:
+    """Calculates SHA-256 hash of a file to detect modifications."""
+    target_path = Path(file_path)
+    hasher = hashlib.sha256()
+    with open(target_path, "rb") as f:
+        while chunk := f.read(8192):
+            hasher.update(chunk)
+    return hasher.hexdigest()

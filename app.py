@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import math
-import time
 from pathlib import Path
 from src.config import CONFIG, BASE_DIR
 from src.pipeline import BatchProcessingPipeline
@@ -73,6 +72,14 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("2. Run Pipeline")
+    
+    # Cache Control Checkbox
+    force_reprocess = st.checkbox(
+        "⚡ Force Re-process All",
+        value=False,
+        help="Bypasses SHA-256 cache and regenerates extractions, emails, and summaries for all files."
+    )
+    
     run_btn = st.button("Execute Batch Workflow", type="primary", use_container_width=True)
 
 # Main Application Body - Run Pipeline Trigger
@@ -86,11 +93,21 @@ if run_btn:
         status_text.info(f"Processing ({current}/{total}): **{filename}**")
 
     pipeline = BatchProcessingPipeline()
-    with st.spinner("Executing document parsing, LLM extraction & summary chains..."):
-        df = pipeline.run(progress_callback=update_progress)
+    spinner_msg = (
+        "Re-processing all files (bypassing cache)..."
+        if force_reprocess
+        else "Processing documents (cached files will be skipped)..."
+    )
+
+    with st.spinner(spinner_msg):
+        df = pipeline.run(
+            progress_callback=update_progress,
+            force_reprocess=force_reprocess
+        )
 
     status_text.success("Batch execution completed successfully!")
     progress_bar.empty()
+    st.rerun()
 
 # Helper function to render paginated table with View buttons
 def render_paginated_table(df_subset, prefix_key):
@@ -196,7 +213,6 @@ if csv_path.exists():
     # Debounced Search Input Bar
     c_search, c_clear = st.columns([5, 1])
     with c_search:
-        # Debouncing: wait for Enter or un-focus before re-executing full filter
         raw_query = st.text_input(
             "🔎 Search cases (Customer, File, Category, or Description):",
             value=st.session_state.search_query,
