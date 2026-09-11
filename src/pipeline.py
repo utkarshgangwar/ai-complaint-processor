@@ -1,4 +1,5 @@
 import json
+import os
 import time
 import pandas as pd
 from pathlib import Path
@@ -21,6 +22,7 @@ class BatchProcessingPipeline:
         self.summaries_dir = BASE_DIR / self.paths.get("case_summaries_dir", "output/case_summaries")
         self.csv_output_path = BASE_DIR / self.paths.get("final_report_csv", "output/final_report.csv")
         self.manifest_path = self.csv_output_path.parent / ".processed_manifest.json"
+        self.errors_path = self.csv_output_path.parent / ".processing_errors.json"
 
         self.supported_extensions = tuple(
             CONFIG.get("processing", {}).get("supported_extensions", [".pdf", ".docx", ".txt"])
@@ -42,6 +44,23 @@ class BatchProcessingPipeline:
         self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
+
+    def _load_errors(self) -> Dict[str, str]:
+        """Loads existing processing error records from disk."""
+        if self.errors_path.exists():
+            try:
+                with open(self.errors_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                LOGGER.warning(f"Failed to read error records: {e}")
+                return {}
+        return {}
+
+    def _save_errors(self, errors: Dict[str, str]):
+        """Persists updated processing errors to disk."""
+        self.errors_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.errors_path, "w", encoding="utf-8") as f:
+            json.dump(errors, f, indent=2)
 
     def process_single_document(self, file_path: Path) -> Dict[str, Any]:
         """Runs the full 3-step LLM extraction and generation workflow for a single file."""
@@ -88,7 +107,7 @@ class BatchProcessingPipeline:
         return record
 
     def run(self, progress_callback=None, force_reprocess: bool = False) -> pd.DataFrame:
-        """Processes all valid documents in the data folder with SHA-256 caching and compiles a CSV report."""
+        """Processes all valid documents with SHA-256 caching and tracks unhandled exceptions."""
         files = [
             f for f in self.data_dir.iterdir()
             if f.is_file() and f.suffix.lower() in self.supported_extensions
@@ -99,9 +118,11 @@ class BatchProcessingPipeline:
 
         if total_files == 0:
             LOGGER.warning("No valid documents found to process.")
+            self._save_errors({})
             return pd.DataFrame()
 
         manifest = {} if force_reprocess else self._load_manifest()
+        current_errors = {} if force_reprocess else self._load_errors()
         processed_records: List[Dict[str, Any]] = []
 
         for index, file_path in enumerate(files, start=1):
@@ -140,6 +161,8 @@ class BatchProcessingPipeline:
                         "case_summary_path": str(summary_path.relative_to(BASE_DIR)),
                     }
                     processed_records.append(cached_record)
+                    # Clear error record if previously logged
+                    current_errors.pop(file_path.name, None)
                     continue
                 except Exception as cache_err:
                     LOGGER.warning(f"Cache read failed for {file_path.name}, executing full run: {cache_err}")
@@ -151,15 +174,22 @@ class BatchProcessingPipeline:
                 record = self.process_single_document(file_path)
                 processed_records.append(record)
                 manifest[file_path.name] = file_hash
+                # Success removes previous failure records
+                current_errors.pop(file_path.name, None)
             except (DocumentIngestionError, ValueError) as err:
-                LOGGER.error(f"Validation/Ingestion error on {file_path.name}: {err}")
+                error_msg = str(err)
+                LOGGER.error(f"Validation/Ingestion error on {file_path.name}: {error_msg}")
+                current_errors[file_path.name] = error_msg
             except Exception as unhandled:
-                LOGGER.exception(f"Unhandled error processing {file_path.name}: {unhandled}")
+                error_msg = f"{type(unhandled).__name__}: {str(unhandled)}"
+                LOGGER.exception(f"Unhandled error processing {file_path.name}: {error_msg}")
+                current_errors[file_path.name] = error_msg
 
-        # Save manifest state
+        # Persist manifest and error tracking states
         self._save_manifest(manifest)
+        self._save_errors(current_errors)
 
-        # 4. Generate Consolidated CSV
+        # Generate Consolidated CSV
         if processed_records:
             df = pd.DataFrame(processed_records)
             self.csv_output_path.parent.mkdir(parents=True, exist_ok=True)

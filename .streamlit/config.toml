@@ -1,0 +1,10 @@
+[client]
+# Disables error popups details from leaking to clients
+showErrorDetails = false
+
+# Hides sidebar navigation collapse indicators if not wanted
+toolbarMode = "minimal"
+
+[browser]
+# Gathers zero telemetry
+gatherUsageStats = false
