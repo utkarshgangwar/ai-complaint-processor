@@ -46,6 +46,7 @@ output/final_report.csv
 output/*.csv
 output/*.json
 output/*.txt
+data/
 
 # If you want git to track the empty output directories, keep .gitkeep files:
 !output/**/.gitkeep
