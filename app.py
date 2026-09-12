@@ -12,8 +12,8 @@ from src.pipeline import BatchProcessingPipeline
 from src.utils import compute_file_hash, get_base_filename
 
 st.set_page_config(
-    page_title="Enterprise AI Case Intelligence",
-    page_icon="⚡",
+    page_title="AI Case Intelligence Platform",
+    page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -352,7 +352,7 @@ st.markdown(
     }}
 
     div[data-testid="stHorizontalBlock"]:has(.row-gray) {{
-        background-color: #f8fafc !important;
+        background-color: #eaedf1 !important;
     }}
 
     div[data-testid="stHorizontalBlock"]:has(.table-row-anchor) div[data-testid="stColumn"]:not(:last-child) {{
@@ -441,7 +441,7 @@ def login_form():
         st.markdown(
             f"""
             <div style="background:{t_surface}; border:1px solid {t_border}; border-radius:8px; padding:18px 20px;">
-                <h4 style="margin-bottom:2px; font-size:1.05rem; color:{t_text};">🔐 Enterprise Case Portal</h4>
+                <h4 style="margin-bottom:2px; font-size:1.05rem; color:{t_text};">🔐 AI Case Processing Platform</h4>
                 <p style="color:{t_subtext}; font-size:0.75rem; margin-bottom:10px;">Sign in with administrative credentials. Sessions persist for 1 hour.</p>
             </div>
             """,
@@ -1157,7 +1157,7 @@ elif current_page == PAGE_REPO:
             hide_index=True,
             selection_mode="multi-row",
             on_select="rerun",
-            height=280,
+            height=420,
             key=dataframe_key
         )
 
@@ -1186,7 +1186,7 @@ elif current_page == PAGE_REPO:
 # PAGE 3: ABOUT PAGE
 # =============================================================
 elif current_page == PAGE_ABOUT:
-    st.markdown('<div class="dashboard-page-title">ℹ️ About Enterprise AI Case Processing Platform</div>', unsafe_allow_html=True)
+    st.markdown('<div class="dashboard-page-title">ℹ️ About AI Case Processing Platform</div>', unsafe_allow_html=True)
 
     col_ab_left, col_ab_right = st.columns([6, 4])
 
