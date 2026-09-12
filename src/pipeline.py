@@ -64,119 +64,158 @@ class BatchProcessingPipeline:
             json.dump(data, f, indent=2)
 
     def _check_content_sufficiency(self, doc_text: str) -> Tuple[bool, str]:
-        """
-        Heuristic check for empty, truncated, or unintelligible input.
-        """
+        """Pre-check for empty or completely blank input."""
         words = doc_text.strip().split()
-        if len(words) < 8:
-            return False, "Insufficient content: Text body has fewer than 8 words."
+        if len(words) < 3:
+            return False, "Insufficient content: Text body has fewer than 3 words."
+        return True, ""
 
-        # Detect repeated punctuation or uniform characters (e.g., 'asdfasdf', '?????')
-        alphanumeric_chars = [c for c in doc_text if c.isalnum()]
-        if len(alphanumeric_chars) < 15:
-            return False, "Absurd content: File lacks sufficient alphanumeric text."
+    def _validate_record_completeness(self, structured_dict: Dict[str, Any]) -> Tuple[bool, str]:
+        """
+        Validates case records. Routes to insufficient info only if 
+        all three core identity/contact fields (customer_name, email, phone_number) are absent.
+        """
+        invalid_markers = {"", "n/a", "na", "none", "unknown", "null", "undefined", "not provided", "unspecified", "valued customer", "customer", "client", "user"}
+
+        # 1. Check Customer Name
+        raw_cust_name = structured_dict.get("customer_name")
+        cust_name = str(raw_cust_name).strip().lower() if raw_cust_name is not None else ""
+        has_valid_name = bool(cust_name and cust_name not in invalid_markers)
+
+        # 2. Check Email
+        raw_email = structured_dict.get("email")
+        email_str = str(raw_email).strip().lower() if raw_email is not None else ""
+        has_valid_email = bool(email_str and email_str not in invalid_markers and "@" in email_str)
+
+        # 3. Check Phone Number
+        raw_phone = structured_dict.get("phone_number")
+        phone_str = str(raw_phone).strip().lower() if raw_phone is not None else ""
+        has_valid_phone = bool(phone_str and phone_str not in invalid_markers)
+
+        # If all three identity/contact fields are missing, flag as insufficient info
+        if not has_valid_name and not has_valid_email and not has_valid_phone:
+            return False, "Insufficient info: Missing customer name, email, and phone number."
+
+        # 4. Issue / Inquiry Description Check
+        raw_desc = structured_dict.get("issue_description")
+        issue_desc = str(raw_desc).strip() if raw_desc is not None else ""
+        if not issue_desc or issue_desc.lower() in invalid_markers or len(issue_desc.split()) < 2:
+            return False, "Insufficient info: Missing issue or inquiry description."
+
+        # Set default fallback category if blank
+        raw_cat = structured_dict.get("complaint_category")
+        if not raw_cat or str(raw_cat).strip().lower() in invalid_markers:
+            structured_dict["complaint_category"] = "General Inquiry"
 
         return True, ""
 
+    def _has_valid_email(self, structured_dict: Dict[str, Any]) -> bool:
+        """Determines if a valid, sendable customer email address exists."""
+        raw_email = structured_dict.get("email")
+        if raw_email is None:
+            return False
+        email_str = str(raw_email).strip().lower()
+        invalid_markers = {"", "n/a", "na", "none", "unknown", "null", "undefined", "not provided"}
+        return bool(email_str and email_str not in invalid_markers and "@" in email_str)
+
+    def _create_insufficient_record(
+        self,
+        file_path: Path,
+        reason: str,
+        start_time: float
+    ) -> Tuple[Dict[str, Any], bool, str]:
+        """Suppresses downstream artifact generation and records an insufficient entry."""
+        file_stem = get_base_filename(file_path)
+
+        for target_artifact in [
+            self.structured_dir / f"{file_stem}.json",
+            self.emails_dir / f"{file_stem}_email.txt",
+            self.summaries_dir / f"{file_stem}_summary.txt"
+        ]:
+            if target_artifact.exists():
+                target_artifact.unlink()
+
+        latency = round(time.time() - start_time, 2)
+        record = {
+            "file_name": file_path.name,
+            "latency_seconds": latency,
+            "customer_name": "N/A",
+            "complaint_category": "Insufficient Data",
+            "issue_description": reason,
+            "case_status": "Closed",
+            "escalation_required": False,
+            "structured_data_path": "",
+            "customer_email_path": "",
+            "case_summary_path": "",
+        }
+        return record, True, reason
+
     def process_single_document(self, file_path: Path) -> Tuple[Dict[str, Any], bool, str]:
-        """
-        Runs the extraction workflow for a single file.
-        Returns: (record_dict, is_insufficient, observation_reason)
-        """
+        """Processes document and generates response email only when customer email is present."""
         start_time = time.time()
         file_stem = get_base_filename(file_path)
         LOGGER.info(f"--- Processing: {file_path.name} ---")
 
-        # 1. Ingestion
+        # 1. Document Ingestion
         doc_data = load_document(file_path)
-        doc_text = doc_data["content"]
+        doc_text = doc_data.get("content", "")
         if not doc_text.strip():
             raise ValueError(f"No extractable text found in file: {file_path.name}")
 
-        # 2. Pre-check for absurd / sparse input
+        # 2. Text Sparseness Check
         is_sufficient, reason = self._check_content_sufficiency(doc_text)
         if not is_sufficient:
-            LOGGER.warning(f"{file_path.name} flagged as insufficient/absurd: {reason}")
-            # Do NOT generate customer email or summary memo
-            # Clean up artifacts if they existed from prior runs
-            for art in [self.emails_dir / f"{file_stem}_email.txt", self.summaries_dir / f"{file_stem}_summary.txt"]:
-                if art.exists():
-                    art.unlink()
-
-            latency = round(time.time() - start_time, 2)
-            record = {
-                "file_name": file_path.name,
-                "latency_seconds": latency,
-                "customer_name": "N/A",
-                "complaint_category": "Insufficient Data",
-                "issue_description": reason,
-                "case_status": "Closed",
-                "escalation_required": False,
-                "structured_data_path": "",
-                "customer_email_path": "",
-                "case_summary_path": "",
-            }
-            return record, True, reason
+            LOGGER.warning(f"{file_path.name} flagged as insufficient: {reason}")
+            return self._create_insufficient_record(file_path, reason, start_time)
 
         # 3. Structured Extraction
         extracted_data = self.chains.run_extraction(doc_text)
         structured_dict = extracted_data.model_dump()
 
-        # Check semantic extraction output for nonsense/hollow cases
-        issue_desc = str(structured_dict.get("issue_description", "")).strip()
-        cat = str(structured_dict.get("complaint_category", "")).strip().lower()
+        # 4. Completeness Validation
+        is_complete, completeness_reason = self._validate_record_completeness(structured_dict)
+        if not is_complete:
+            LOGGER.warning(f"{file_path.name} routed to insufficient info: {completeness_reason}")
+            return self._create_insufficient_record(file_path, completeness_reason, start_time)
 
-        if len(issue_desc.split()) < 4 or cat in ["unknown", "none", "n/a"]:
-            insuff_reason = "Model evaluated content as unintelligible, absurd, or missing actionable grievance details."
-            LOGGER.warning(f"{file_path.name} flagged as insufficient post-extraction: {insuff_reason}")
-
-            # Save partial extraction JSON for audit trail
-            json_path = self.structured_dir / f"{file_stem}.json"
-            save_json_file(structured_dict, json_path)
-
-            # Ensure email and summary are NOT produced or retained
-            for art in [self.emails_dir / f"{file_stem}_email.txt", self.summaries_dir / f"{file_stem}_summary.txt"]:
-                if art.exists():
-                    art.unlink()
-
-            latency = round(time.time() - start_time, 2)
-            record = {
-                "file_name": file_path.name,
-                "latency_seconds": latency,
-                **structured_dict,
-                "structured_data_path": str(json_path.relative_to(BASE_DIR)),
-                "customer_email_path": "",
-                "case_summary_path": "",
-            }
-            return record, True, insuff_reason
-
-        # 4. Standard Flow: Valid complaint content -> Generate all artifacts
+        # 5. Save Structured JSON Data
         json_path = self.structured_dir / f"{file_stem}.json"
         save_json_file(structured_dict, json_path)
 
-        customer_email = self.chains.run_email_generation(extracted_data)
-        email_path = self.emails_dir / f"{file_stem}_email.txt"
-        save_text_file(customer_email, email_path)
+        # 6. Customer Email Generation: Generated ONLY if a valid email address is present
+        email_path_str = ""
+        email_file = self.emails_dir / f"{file_stem}_email.txt"
 
+        if self._has_valid_email(structured_dict):
+            customer_email = self.chains.run_email_generation(extracted_data)
+            save_text_file(customer_email, email_file)
+            email_path_str = str(email_file.relative_to(BASE_DIR))
+            LOGGER.info(f"Generated customer email for {structured_dict.get('customer_name')} ({structured_dict.get('email')})")
+        else:
+            if email_file.exists():
+                email_file.unlink()
+            LOGGER.info(f"Skipping email generation for {file_path.name} (no email address found).")
+
+        # 7. Management Case Summary Memo
         case_summary = self.chains.run_summary_generation(extracted_data, doc_text)
         summary_path = self.summaries_dir / f"{file_stem}_summary.txt"
         save_text_file(case_summary, summary_path)
 
         latency = round(time.time() - start_time, 2)
-        LOGGER.info(f"Completed {file_path.name} in {latency}s")
+        LOGGER.info(f"Completed processing for {file_path.name} in {latency}s")
 
         record = {
             "file_name": file_path.name,
             "latency_seconds": latency,
             **structured_dict,
             "structured_data_path": str(json_path.relative_to(BASE_DIR)),
-            "customer_email_path": str(email_path.relative_to(BASE_DIR)),
+            "customer_email_path": email_path_str,
             "case_summary_path": str(summary_path.relative_to(BASE_DIR)),
         }
         return record, False, ""
 
     def run(self, progress_callback=None, force_reprocess: bool = False) -> pd.DataFrame:
-        """Processes all valid documents with SHA-256 caching and tracks unhandled exceptions & insufficient files."""
+        """Runs batch processing, handles caching, and synchronizes manifest and logs."""
         files = [
             f for f in self.data_dir.iterdir()
             if f.is_file() and f.suffix.lower() in self.supported_extensions
@@ -207,29 +246,28 @@ class BatchProcessingPipeline:
 
             file_hash = compute_file_hash(file_path)
 
-            # -------------------------------------------------------------
-            # CACHE HIT: Valid previously processed document
-            # -------------------------------------------------------------
+            # Cache Hit: Valid, fully populated record
             if (
                 not force_reprocess
                 and file_path.name in manifest
                 and manifest[file_path.name] == file_hash
                 and file_path.name not in current_insufficient
                 and json_path.exists()
-                and email_path.exists()
                 and summary_path.exists()
             ):
-                LOGGER.info(f"Skipping {file_path.name} (identical hash, cached).")
+                LOGGER.info(f"Skipping {file_path.name} (identical hash, cached complete).")
                 try:
                     with open(json_path, "r", encoding="utf-8") as jf:
                         cached_dict = json.load(jf)
+
+                    cached_email_path = str(email_path.relative_to(BASE_DIR)) if email_path.exists() else ""
 
                     cached_record = {
                         "file_name": file_path.name,
                         "latency_seconds": 0.0,
                         **cached_dict,
                         "structured_data_path": str(json_path.relative_to(BASE_DIR)),
-                        "customer_email_path": str(email_path.relative_to(BASE_DIR)),
+                        "customer_email_path": cached_email_path,
                         "case_summary_path": str(summary_path.relative_to(BASE_DIR)),
                     }
                     processed_records.append(cached_record)
@@ -237,24 +275,20 @@ class BatchProcessingPipeline:
                     current_insufficient.pop(file_path.name, None)
                     continue
                 except Exception as cache_err:
-                    LOGGER.warning(f"Cache read failed for {file_path.name}, executing full run: {cache_err}")
+                    LOGGER.warning(f"Cache read failed for {file_path.name}, running fresh extraction: {cache_err}")
 
-            # -------------------------------------------------------------
-            # CACHE HIT: Insufficient document previously cataloged
-            # -------------------------------------------------------------
+            # Cache Hit: Insufficient file
             if (
                 not force_reprocess
                 and file_path.name in manifest
                 and manifest[file_path.name] == file_hash
                 and file_path.name in current_insufficient
             ):
-                LOGGER.info(f"Skipping {file_path.name} (identical hash, known insufficient).")
+                LOGGER.info(f"Skipping {file_path.name} (identical hash, cached insufficient).")
                 current_errors.pop(file_path.name, None)
                 continue
 
-            # -------------------------------------------------------------
-            # RUN WORKFLOW
-            # -------------------------------------------------------------
+            # Run Document Processing
             try:
                 record, is_insufficient, reason = self.process_single_document(file_path)
                 manifest[file_path.name] = file_hash
@@ -277,18 +311,21 @@ class BatchProcessingPipeline:
                 current_errors[file_path.name] = error_msg
                 current_insufficient.pop(file_path.name, None)
 
-        # Persist manifest, errors, and insufficient registry
+        # Persist registries
         self._save_manifest(manifest)
         self._save_json_record(current_errors, self.errors_path)
         self._save_json_record(current_insufficient, self.insufficient_path)
 
-        # Generate Consolidated CSV (clean, valid cases only)
+        # Save clean final report containing only valid processed cases
         if processed_records:
             df = pd.DataFrame(processed_records)
             self.csv_output_path.parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(self.csv_output_path, index=False, encoding="utf-8")
             LOGGER.info(f"Consolidated final report generated at: {self.csv_output_path}")
             return df
+        else:
+            if self.csv_output_path.exists():
+                self.csv_output_path.unlink()
 
         return pd.DataFrame()
 

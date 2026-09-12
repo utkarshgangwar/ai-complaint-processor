@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import extra_streamlit_components as stx
 
 from src.config import BASE_DIR, CONFIG
@@ -24,23 +25,32 @@ AUTH_USER = os.getenv("APP_USER", "admin")
 AUTH_PASS = os.getenv("APP_PASSWORD", "secretpassword123")
 SESSION_MAX_AGE_SECONDS = 3600  # 1 Hour TTL
 
-cookie_manager = stx.CookieManager()
+cookie_manager = stx.CookieManager(key="app_cookie_manager")
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-auth_cookie = cookie_manager.get("auth_session")
+if "logout_requested" not in st.session_state:
+    st.session_state.logout_requested = False
+
 current_ts = int(time.time())
+auth_cookie = cookie_manager.get("auth_session")
 
-if auth_cookie and isinstance(auth_cookie, dict):
-    saved_user = auth_cookie.get("user")
-    login_ts = auth_cookie.get("timestamp", 0)
+# Guard against re-authenticating immediately after clicking logout
+if st.session_state.logout_requested:
+    st.session_state.authenticated = False
+    cookie_manager.delete("auth_session")
+else:
+    if not st.session_state.authenticated:
+        if auth_cookie and isinstance(auth_cookie, dict):
+            saved_user = auth_cookie.get("user")
+            login_ts = auth_cookie.get("timestamp", 0)
 
-    if saved_user == AUTH_USER and (current_ts - login_ts) < SESSION_MAX_AGE_SECONDS:
-        st.session_state.authenticated = True
-    else:
-        cookie_manager.delete("auth_session")
-        st.session_state.authenticated = False
+            if saved_user == AUTH_USER and (current_ts - login_ts) < SESSION_MAX_AGE_SECONDS:
+                st.session_state.authenticated = True
+            else:
+                cookie_manager.delete("auth_session")
+                st.session_state.authenticated = False
 
 # -------------------------------------------------------------
 # SESSION STATE INITIALIZATION & SAFE REDIRECT RESOLUTION
@@ -58,7 +68,6 @@ TAB_OTH = "📦 Others / Insufficient"
 TAB_INS = "🔍 Inspector"
 TAB_OPTIONS = [TAB_ALL, TAB_ESC, TAB_ACT, TAB_ERR, TAB_OTH, TAB_INS]
 
-# Consume staged redirects before widgets instantiate
 if "redirect_target" in st.session_state:
     st.session_state.sidebar_page_selector = st.session_state.pop("redirect_target")
 
@@ -84,7 +93,7 @@ if "repo_table_nonce" not in st.session_state:
     st.session_state.repo_table_nonce = 0
 
 # -------------------------------------------------------------
-# FIXED PRODUCTION THEME PALETTE
+# PRODUCTION THEME PALETTE
 # -------------------------------------------------------------
 t_bg = "#f8fafc"
 t_surface = "#ffffff"
@@ -96,7 +105,7 @@ t_subtext = "#64748b"
 t_metric_bg = "#ffffff"
 
 # -------------------------------------------------------------
-# CLEAN CSS (FIXED OVERLAPS, PROPER CLEARANCE & COMPACT TABLES)
+# FULLY RESPONSIVE TABLE CSS: AUTO-TRUNCATION, MIN-WIDTH RESETS
 # -------------------------------------------------------------
 st.markdown(
     f"""
@@ -115,7 +124,7 @@ st.markdown(
         height: 0px !important;
     }}
 
-    /* Lock viewport height cleanly */
+    /* Lock screen height cleanly to prevent outer page scrollbar */
     html, body, [data-testid="stAppViewContainer"] {{
         background-color: {t_bg} !important;
         color: {t_text} !important;
@@ -124,40 +133,35 @@ st.markdown(
         max-height: 100vh !important;
     }}
 
-    /* Proper top clearance to prevent header overlaps */
     .block-container {{
-        padding-top: 1.2rem !important;
+        padding-top: 0.8rem !important;
         padding-bottom: 2rem !important;
-        padding-left: 1.2rem !important;
-        padding-right: 1.2rem !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
         max-width: 99% !important;
         height: calc(100vh - 28px) !important;
         overflow-y: hidden !important;
     }}
 
-    /* Balanced spacing between major page sections */
     div[data-testid="stVerticalBlock"] {{
-        gap: 0.45rem !important;
+        gap: 0.35rem !important;
     }}
 
     section[data-testid="stSidebar"] {{
         background-color: {t_surface} !important;
         border-right: 1px solid {t_border} !important;
-        width: 290px !important;
+        width: 280px !important;
     }}
 
-    /* Heading bar with clean spacing */
     .dashboard-page-title {{
         font-size: 1.05rem !important;
         font-weight: 800 !important;
         color: {t_text} !important;
-        margin-top: 10px !important;
-        margin-bottom: 2rem !important;
-        # display: block !important;
-        line-height: 1.3 !important;
-        justify-content: center;
-        display: flex;
-        
+        margin: 0 0 2rem 0 !important;
+        line-height: 1.2 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }}
 
     /* Metric Cards */
@@ -165,19 +169,19 @@ st.markdown(
         background: {t_metric_bg} !important;
         border: 1px solid {t_border} !important;
         border-radius: 6px !important;
-        padding: 6px 10px !important;
-        min-height: 52px !important;
+        padding: 5px 8px !important;
+        min-height: 50px !important;
     }}
     div[data-testid="stMetric"] label {{
         color: {t_subtext} !important;
         font-weight: 600 !important;
-        font-size: 0.69rem !important;
+        font-size: 0.68rem !important;
         margin-bottom: 0px !important;
         line-height: 1.1 !important;
     }}
     div[data-testid="stMetric"] div[data-testid="stMetricValue"] {{
         color: {t_text} !important;
-        font-size: 1.15rem !important;
+        font-size: 1.12rem !important;
         font-weight: 700 !important;
         line-height: 1.1 !important;
     }}
@@ -189,27 +193,49 @@ st.markdown(
         overflow: hidden !important;
     }}
 
+    /* =========================================================
+       CRITICAL RESPONSIVE TRUNCATION RULE
+       ========================================================= */
     .table-cell-text {{
-        font-size: 0.77rem !important;
+        font-size: 0.76rem !important;
         line-height: 1.2 !important;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        display: block !important;
+        width: 100% !important;
+        max-width: 100% !important;
+    }}
+
+    /* Force all flex containers to honor content bounds (prevents horizontal overflow) */
+    div[data-testid="stHorizontalBlock"]:has(.table-header-anchor) div[data-testid="stColumn"],
+    div[data-testid="stHorizontalBlock"]:has(.table-row-anchor) div[data-testid="stColumn"] {{
+        min-width: 0 !important;
+        overflow: hidden !important;
+    }}
+
+    div[data-testid="stHorizontalBlock"]:has(.table-header-anchor) div[data-testid="stElementContainer"],
+    div[data-testid="stHorizontalBlock"]:has(.table-row-anchor) div[data-testid="stElementContainer"] {{
+        min-width: 0 !important;
+        width: 100% !important;
+        overflow: hidden !important;
     }}
 
     /* =========================================================
-       BOXED HEADER ROW: SEAMLESS CARD BORDER & VERTICAL DIVIDERS
+       BOXED HEADER ROW: CONTINUOUS BORDER & VERTICAL DIVIDERS
        ========================================================= */
     div[data-testid="stHorizontalBlock"]:has(.table-header-anchor) {{
         border: 1.5px solid {t_border_strong} !important;
         border-radius: 7px !important;
         background-color: {t_surface} !important;
-        padding: 3px 4px !important;
+        padding: 2px 4px !important;
         margin-top: 2px !important;
-        margin-bottom: 4px !important;
+        margin-bottom: 3px !important;
         display: flex !important;
         align-items: center !important;
-        min-height: 30px !important;
+        min-height: 28px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
     }}
 
     div[data-testid="stHorizontalBlock"]:has(.table-header-anchor) div[data-testid="stColumn"]:not(:last-child) {{
@@ -235,13 +261,12 @@ st.markdown(
         line-height: 1.1 !important;
     }}
 
-    /* =========================================================
-       HEADER SORT BUTTONS: ZERO BORDER, FLAT GHOST STYLE
-       ========================================================= */
+    /* Header Sort Button: Borderless, Flat, Responsive */
     div[data-testid="stHorizontalBlock"]:has(.table-header-anchor) div[data-testid="stButton"] {{
         margin: 0 !important;
         padding: 0 !important;
         width: 100% !important;
+        min-width: 0 !important;
     }}
 
     div[data-testid="stHorizontalBlock"]:has(.table-header-anchor) button,
@@ -258,12 +283,16 @@ st.markdown(
         min-height: 22px !important;
         height: 22px !important;
         width: 100% !important;
+        max-width: 100% !important;
         font-size: 0.70rem !important;
         font-weight: 600 !important;
         color: #334155 !important;
         display: flex !important;
         align-items: center !important;
         justify-content: flex-start !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
         transition: color 0.15s ease !important;
     }}
 
@@ -291,7 +320,7 @@ st.markdown(
     }}
 
     /* =========================================================
-       DATA ROWS CONTAINER: VERTICAL LINES, ZEBRA STRIPING, ZERO GAPS
+       DATA ROWS CONTAINER: ZEBRA STRIPING, VERTICAL DIVIDERS
        ========================================================= */
     div[data-testid="stVerticalBlock"]:has(> div > div[data-testid="stHorizontalBlock"]:has(.table-row-anchor)) {{
         border: 1px solid {t_border} !important;
@@ -299,6 +328,8 @@ st.markdown(
         overflow: hidden !important;
         background: {t_surface} !important;
         gap: 0px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
     }}
 
     div[data-testid="stHorizontalBlock"]:has(.table-row-anchor) {{
@@ -306,16 +337,16 @@ st.markdown(
         padding: 0px 4px !important;
         margin: 0 !important;
         min-height: 28px !important;
-        height: 28px !important;
         display: flex !important;
         align-items: center !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
     }}
 
     div[data-testid="stHorizontalBlock"]:has(.table-row-anchor):last-child {{
         border-bottom: none !important;
     }}
 
-    /* Alternating Zebra Rows (White / Light Gray) */
     div[data-testid="stHorizontalBlock"]:has(.row-white) {{
         background-color: #ffffff !important;
     }}
@@ -329,8 +360,8 @@ st.markdown(
     }}
 
     div[data-testid="stHorizontalBlock"]:has(.table-row-anchor) div[data-testid="stColumn"] {{
-        padding-left: 8px !important;
-        padding-right: 8px !important;
+        padding-left: 6px !important;
+        padding-right: 6px !important;
         display: flex !important;
         align-items: center !important;
     }}
@@ -342,7 +373,7 @@ st.markdown(
         justify-content: center !important;
     }}
 
-    /* Compact View Action Icon Button */
+    /* Compact View Button */
     .view-btn-container div[data-testid="stButton"] button {{
         padding: 0px !important;
         min-height: 20px !important;
@@ -361,7 +392,6 @@ st.markdown(
         color: #0284c7 !important;
     }}
 
-    /* Compact global buttons & inputs */
     div[data-testid="stButton"] button {{
         padding: 1px 6px !important;
         min-height: 24px !important;
@@ -435,6 +465,7 @@ def login_form():
                         key="set_auth_cookie"
                     )
                     st.session_state.authenticated = True
+                    st.session_state.logout_requested = False
                     st.toast("Authenticated! Session valid for 1 hour.")
                     time.sleep(0.3)
                     st.rerun()
@@ -472,7 +503,6 @@ error_log = load_json_file(errors_path)
 insufficient_log = load_json_file(insufficient_path)
 
 def open_inspector_tab(filename: str):
-    """Sets the selected doc, stages redirection to TAB_INS, and reruns cleanly."""
     st.session_state.selected_doc = filename
     st.session_state.tab_redirect_target = TAB_INS
     st.rerun()
@@ -530,17 +560,58 @@ def get_file_status_label(filename, errors_dict, insufficient_dict):
     return "⏳ Unprocessed"
 
 # -------------------------------------------------------------
-# SIDEBAR NAVIGATION
+# SIDEBAR NAVIGATION & FUNCTIONAL LOGOUT + COUNTDOWN
 # -------------------------------------------------------------
 with st.sidebar:
     st.markdown(
         f"""
-        <div style="margin-bottom: 8px;">
+        <div style="margin-bottom: 2px;">
             <div style="font-size: 1.05rem; font-weight: 800; color: {t_text};">⚡ AI Case Engine</div>
-            <div style="font-size: 0.68rem; color: {t_subtext};">Session active (1h TTL) &bull; <b>{AUTH_USER}</b></div>
+            <div style="font-size: 0.68rem; color: {t_subtext};">Active User: <b>{AUTH_USER}</b></div>
         </div>
         """,
         unsafe_allow_html=True
+    )
+
+    # Client-side countdown running in isolated iframe container
+    login_timestamp = (
+        auth_cookie.get("timestamp", current_ts)
+        if auth_cookie and isinstance(auth_cookie, dict)
+        else current_ts
+    )
+    expiry_timestamp = int(login_timestamp + SESSION_MAX_AGE_SECONDS)
+
+    components.html(
+        f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    font-size: 0.72rem; color: #64748b; display: flex; align-items: center; gap: 4px; padding: 2px 0;">
+            <span>Session:</span>
+            <b id="countdown-timer" style="color: #0284c7; font-family: monospace; font-size: 0.78rem;">--:--</b>
+        </div>
+        <script>
+            const expiry = {expiry_timestamp} * 1000;
+            const timerEl = document.getElementById("countdown-timer");
+
+            function updateTimer() {{
+                const now = Date.now();
+                const remaining = Math.max(0, Math.floor((expiry - now) / 1000));
+                
+                if (remaining <= 0) {{
+                    timerEl.innerText = "Expired";
+                    timerEl.style.color = "#ef4444";
+                    return;
+                }}
+                
+                const mins = String(Math.floor(remaining / 60)).padStart(2, '0');
+                const secs = String(remaining % 60).padStart(2, '0');
+                timerEl.innerText = mins + ":" + secs;
+            }}
+
+            updateTimer();
+            setInterval(updateTimer, 1000);
+        </script>
+        """,
+        height=24
     )
 
     current_page = st.radio(
@@ -549,16 +620,18 @@ with st.sidebar:
         key="sidebar_page_selector"
     )
 
-    st.markdown("<hr style='margin: 8px 0; border: none; border-top: 1px solid " + t_border + ";'>", unsafe_allow_html=True)
+    st.markdown(f"<hr style='margin: 8px 0; border: none; border-top: 1px solid {t_border};'>", unsafe_allow_html=True)
     
+    # Deterministic Logout Handling
     if st.button("Log Out", key="sidebar_logout_btn", use_container_width=True):
-        cookie_manager.delete("auth_session")
         st.session_state.authenticated = False
-        time.sleep(0.2)
+        st.session_state.logout_requested = True
+        cookie_manager.delete("auth_session")
+        time.sleep(0.15)
         st.rerun()
 
 # -------------------------------------------------------------
-# COMMON TABLE COMPONENT: BOXED HEADER, VERTICAL LINES & ZEBRA ROWS
+# RESPONSIVE TABLE COMPONENT
 # -------------------------------------------------------------
 def render_common_dashboard_table(
     df_subset: pd.DataFrame, 
@@ -570,7 +643,6 @@ def render_common_dashboard_table(
         st.info("No records found in this view.")
         return
 
-    # Tracking sort state per-table
     sort_col_key = f"{table_key}_sort_col"
     sort_asc_key = f"{table_key}_sort_asc"
 
@@ -582,7 +654,6 @@ def render_common_dashboard_table(
     active_sort_col = st.session_state[sort_col_key]
     active_sort_asc = st.session_state[sort_asc_key]
 
-    # Sort dataframe safely
     if active_sort_col in df_subset.columns:
         sorted_df = df_subset.sort_values(
             by=active_sort_col, 
@@ -592,13 +663,12 @@ def render_common_dashboard_table(
     else:
         sorted_df = df_subset.copy()
 
-    # Pagination state
-    page_size_options = [5, 10, 20]
+    page_size_options = [6, 10, 20]
     page_state_key = f"{table_key}_current_page"
     size_state_key = f"{table_key}_pg_size"
 
     if size_state_key not in st.session_state:
-        st.session_state[size_state_key] = 5
+        st.session_state[size_state_key] = 6
 
     page_size = st.session_state[size_state_key]
     total_records = len(sorted_df)
@@ -612,18 +682,18 @@ def render_common_dashboard_table(
     end_idx = min(start_idx + page_size, total_records)
     page_df = sorted_df.iloc[start_idx:end_idx].copy()
 
-    # Proportions
-    proportions = [0.55] if enable_view_action else []
+    proportions = [0.45] if enable_view_action else []
     proportions.extend([cfg["width"] for cfg in columns_config])
 
-    # 1. CONTINUOUS BOXED HEADER
+    # 1. Boxed Header Strip
     header_cols = st.columns(proportions)
     h_idx = 0
 
     if enable_view_action:
         with header_cols[h_idx]:
             st.markdown(
-                '<div class="table-header-anchor"></div>', 
+                '<div class="table-header-anchor"></div>'
+                '<div class="table-header-label" style="text-align:center;">VIEW</div>', 
                 unsafe_allow_html=True
             )
         h_idx += 1
@@ -641,19 +711,22 @@ def render_common_dashboard_table(
             indicator = ""
 
         with header_cols[h_idx]:
-            st.markdown('<div class="header-sort-btn">', unsafe_allow_html=True)
-            if st.button(f"{header_text}{indicator}", key=f"hbtn_{table_key}_{field}", help=f"Sort by {header_text}", use_container_width=True):
+            if st.button(
+                f"{header_text}{indicator}", 
+                key=f"hbtn_{table_key}_{field}", 
+                help=f"Sort by {header_text}", 
+                use_container_width=True
+            ):
                 if st.session_state[sort_col_key] == field:
                     st.session_state[sort_asc_key] = not st.session_state[sort_asc_key]
                 else:
                     st.session_state[sort_col_key] = field
                     st.session_state[sort_asc_key] = True
                 st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
         h_idx += 1
 
-    # 2. DATA ROWS CONTAINER: VERTICAL LINES, ZEBRA STRIPING, ZERO EXTRA GAPS
-    with st.container(height=265):
+    # 2. Data Rows Container with responsive auto-truncation
+    with st.container(height=340):
         for idx, (_, row) in enumerate(page_df.iterrows()):
             row_cols = st.columns(proportions)
             row_col_idx = 0
@@ -679,17 +752,17 @@ def render_common_dashboard_table(
                     if cfg.get("is_badge", False):
                         is_esc = bool(val)
                         badge_text = "🚨 Escalated" if is_esc else "🟢 Standard"
-                        st.markdown(f"<span class='table-cell-text' style='font-weight:600;'>{badge_text}</span>", unsafe_allow_html=True)
+                        st.markdown(f"<span class='table-cell-text' style='font-weight:600;' title='{badge_text}'>{badge_text}</span>", unsafe_allow_html=True)
                     elif cfg.get("is_mono", False):
                         st.markdown(f"<span class='table-cell-text' style='font-weight:600; color:{t_text}; font-family:monospace;' title='{val}'>{val}</span>", unsafe_allow_html=True)
                     elif cfg.get("is_latency", False):
                         latency_str = f"{val:.2f}s" if isinstance(val, (int, float)) else str(val)
-                        st.markdown(f"<span class='table-cell-text' style='color:{t_subtext}; font-family:monospace;'>{latency_str}</span>", unsafe_allow_html=True)
+                        st.markdown(f"<span class='table-cell-text' style='color:{t_subtext}; font-family:monospace;' title='{latency_str}'>{latency_str}</span>", unsafe_allow_html=True)
                     else:
                         st.markdown(f"<span class='table-cell-text' title='{val}'>{val}</span>", unsafe_allow_html=True)
                 row_col_idx += 1
 
-    # 3. PAGINATION BAR SITUATED STRICTLY BELOW TABLE
+    # 3. Below-table pagination
     c_prev, c_info, c_next, c_size = st.columns([0.8, 5.4, 0.8, 1.8])
 
     with c_prev:
@@ -723,14 +796,14 @@ def render_common_dashboard_table(
             st.session_state[page_state_key] = 1
             st.rerun()
 
-# Shared column schemas for primary complaint tables
+# Normalized proportions to prevent horizontal overflow
 PRIMARY_CASE_COLUMNS = [
-    {"field": "file_name", "header": "Document Name", "width": 3.0, "is_mono": True},
-    {"field": "customer_name", "header": "Customer", "width": 2.2},
+    {"field": "file_name", "header": "Document Name", "width": 2.8, "is_mono": True},
+    {"field": "customer_name", "header": "Customer", "width": 1.8},
     {"field": "complaint_category", "header": "Category", "width": 2.2},
-    {"field": "case_status", "header": "Status", "width": 1.1},
+    {"field": "case_status", "header": "Status", "width": 1.0},
     {"field": "escalation_required", "header": "Priority", "width": 1.2, "is_badge": True},
-    {"field": "latency_seconds", "header": "Latency", "width": 1.0, "is_latency": True},
+    {"field": "latency_seconds", "header": "Latency", "width": 0.8, "is_latency": True},
 ]
 
 # =============================================================
@@ -746,10 +819,38 @@ if current_page == PAGE_MAIN:
     if has_report or has_errors or has_insufficient:
         df_report = pd.read_csv(csv_path) if has_report else pd.DataFrame()
         
-        if not df_report.empty and "file_name" in df_report.columns:
-            valid_report_df = df_report[~df_report["file_name"].isin(insufficient_log.keys())]
-        else:
+        # Build unified rows for errored and insufficient records so they show up in All Cases
+        extra_rows = []
+        for err_file, err_reason in error_log.items():
+            extra_rows.append({
+                "file_name": err_file,
+                "customer_name": "N/A (Error)",
+                "complaint_category": "Processing Exception",
+                "issue_description": err_reason,
+                "case_status": "Errored",
+                "escalation_required": False,
+                "latency_seconds": 0.0
+            })
+        for ins_file, ins_reason in insufficient_log.items():
+            extra_rows.append({
+                "file_name": ins_file,
+                "customer_name": "N/A (Insufficient)",
+                "complaint_category": "Insufficient Info",
+                "issue_description": ins_reason,
+                "case_status": "Closed",
+                "escalation_required": False,
+                "latency_seconds": 0.0
+            })
+
+        df_extra = pd.DataFrame(extra_rows)
+        
+        # Merge standard report with error and insufficient entries for the 'All Cases' view
+        if not df_report.empty and not df_extra.empty:
+            valid_report_df = pd.concat([df_report, df_extra], ignore_index=True).drop_duplicates(subset=["file_name"], keep="first")
+        elif not df_report.empty:
             valid_report_df = df_report
+        else:
+            valid_report_df = df_extra
 
         all_files = valid_report_df["file_name"].tolist() if not valid_report_df.empty and "file_name" in valid_report_df else []
         all_inspectable = list(dict.fromkeys(all_files + list(insufficient_log.keys())))
@@ -757,13 +858,13 @@ if current_page == PAGE_MAIN:
         if all_inspectable and (not st.session_state.selected_doc or st.session_state.selected_doc not in all_inspectable):
             st.session_state.selected_doc = all_inspectable[0]
 
-        total_cases = len(valid_report_df)
-        escalations_needed = int(valid_report_df["escalation_required"].sum()) if not valid_report_df.empty and "escalation_required" in valid_report_df else 0
-        active_pending = int(valid_report_df["case_status"].isin(["Open", "In Progress"]).sum()) if not valid_report_df.empty and "case_status" in valid_report_df else 0
+        total_cases = len(df_report) if not df_report.empty else 0
+        escalations_needed = int(df_report["escalation_required"].sum()) if not df_report.empty and "escalation_required" in df_report else 0
+        active_pending = int(df_report["case_status"].isin(["Open", "In Progress"]).sum()) if not df_report.empty and "case_status" in df_report else 0
         num_errored = len(error_log)
         num_insufficient = len(insufficient_log)
 
-        # KPI Metrics with explicit gap
+        # Compact Metric Ribbon
         kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5 = st.columns(5)
         kpi_col1.metric("Processed Cases", total_cases)
         kpi_col2.metric("Escalations Needed", escalations_needed)
@@ -771,7 +872,7 @@ if current_page == PAGE_MAIN:
         kpi_col4.metric("Failed / Errored", num_errored, delta=f"{num_errored} Errors" if num_errored > 0 else None, delta_color="inverse")
         kpi_col5.metric("Others / Insufficient", num_insufficient)
 
-        # Search Bar & Navigation Tabs (Single Compact Band)
+        # Filters & Tabs
         c_search, c_tabs = st.columns([3.5, 6.5])
         with c_search:
             raw_query = st.text_input(
@@ -804,11 +905,10 @@ if current_page == PAGE_MAIN:
                     mask = mask | filtered_df[col].astype(str).str.lower().str.contains(q, na=False)
             filtered_df = filtered_df[mask]
 
-        # Tab Views
         if active_tab == TAB_ALL:
             col_hdr, col_dl = st.columns([8.8, 1.2])
             with col_hdr:
-                st.caption(f"Showing all processed cases ({len(filtered_df)} total) &bull; Click column headers to sort &bull; Click 👁️ to inspect")
+                st.caption(f"Showing all unified cases ({len(filtered_df)} total) &bull; Click headers to sort &bull; Hover cells for full text")
             with col_dl:
                 if not filtered_df.empty:
                     st.download_button(
@@ -821,12 +921,12 @@ if current_page == PAGE_MAIN:
             render_common_dashboard_table(filtered_df, "all_cases", PRIMARY_CASE_COLUMNS, enable_view_action=True)
 
         elif active_tab == TAB_ESC:
-            st.caption("🚨 Priority Escalation Queue &bull; Click column headers to sort &bull; Click 👁️ to inspect")
+            st.caption("🚨 Priority Escalation Queue &bull; Click headers to sort")
             df_escalated = filtered_df[filtered_df["escalation_required"] == True] if not filtered_df.empty and "escalation_required" in filtered_df else pd.DataFrame()
             render_common_dashboard_table(df_escalated, "esc_cases", PRIMARY_CASE_COLUMNS, enable_view_action=True)
 
         elif active_tab == TAB_ACT:
-            st.caption("⏳ Active Work Queue &bull; Click column headers to sort &bull; Click 👁️ to inspect")
+            st.caption("⏳ Active Work Queue &bull; Click headers to sort")
             df_active = filtered_df[filtered_df["case_status"].isin(["Open", "In Progress"])] if not filtered_df.empty and "case_status" in filtered_df else pd.DataFrame()
             render_common_dashboard_table(df_active, "act_cases", PRIMARY_CASE_COLUMNS, enable_view_action=True)
 
@@ -867,8 +967,8 @@ if current_page == PAGE_MAIN:
                 for fname, reason in insufficient_log.items():
                     oth_rows.append({
                         "file_name": fname,
-                        "status": "Insufficient / Absurd Data",
-                        "explanation": reason if isinstance(reason, str) else "The document content does not contain sufficient intelligible details to process or draft a response."
+                        "status": "Insufficient / Incomplete Info",
+                        "explanation": reason if isinstance(reason, str) else "The document content lacks complete actionable details."
                     })
 
                 oth_df = pd.DataFrame(oth_rows)
@@ -897,7 +997,7 @@ if current_page == PAGE_MAIN:
                     stem = get_base_filename(selected_file)
                     is_file_insufficient = selected_file in insufficient_log
 
-                    with st.container(height=310):
+                    with st.container(height=420):
                         col_json, col_text = st.columns([1, 1])
                         with col_json:
                             st.markdown(f"<span style='font-size:0.75rem; font-weight:700; color:{t_subtext};'>EXTRACTED JSON DATA</span>", unsafe_allow_html=True)
@@ -917,7 +1017,7 @@ if current_page == PAGE_MAIN:
                             st.markdown(f"<span style='font-size:0.75rem; font-weight:700; color:{t_subtext};'>CUSTOMER RESPONSE EMAIL</span>", unsafe_allow_html=True)
                             
                             if is_file_insufficient:
-                                st.error("⚠️ Notice: The file does not contain sufficient or intelligible complaint data. Automated email draft generation was withheld.")
+                                st.error("⚠️ Notice: The file does not contain sufficient customer details. Automated email draft generation was withheld.")
                             else:
                                 email_file = emails_dir / f"{stem}_email.txt"
                                 if email_file.exists():
@@ -932,7 +1032,7 @@ if current_page == PAGE_MAIN:
                             st.markdown(f"<span style='font-size:0.75rem; font-weight:700; color:{t_subtext};'>MANAGEMENT BRIEFING MEMO</span>", unsafe_allow_html=True)
                             
                             if is_file_insufficient:
-                                st.warning("Notice: Case summary memo bypassed due to insufficient document content.")
+                                st.warning("Notice: Case summary memo bypassed due to incomplete document content.")
                             else:
                                 summary_file = summaries_dir / f"{stem}_summary.txt"
                                 if summary_file.exists():
@@ -944,6 +1044,7 @@ if current_page == PAGE_MAIN:
                                     st.warning("Missing summary artifact.")
     else:
         st.info("No report found yet. Select '📁 Manage & Ingest Files' in the sidebar to upload files and run the workflow.")
+
 
 # =============================================================
 # PAGE 2: MANAGE & INGEST FILES + EXECUTE PIPELINE
@@ -977,7 +1078,6 @@ elif current_page == PAGE_REPO:
         )
         run_pipeline_btn = st.button("⚡ Run Batch Processing Pipeline", type="primary", use_container_width=True)
 
-    # Execution and Redirection
     if run_pipeline_btn:
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -1094,18 +1194,18 @@ elif current_page == PAGE_ABOUT:
         st.markdown(
             f"""
             <div style="background:{t_surface}; border:1px solid {t_border}; border-radius:6px; padding:14px 16px;">
-                <b style="color:{t_text}; font-size:0.85rem;">Architecture Overview</b>
+                <b style="color:{t_text}; font-size:0.85rem;">Project Overview & Objectives</b>
                 <p style="font-size:0.77rem; color:{t_subtext}; line-height:1.45; margin-top:4px;">
-                    The platform coordinates batch processing for enterprise customer grievance logs.
-                    It supports heterogeneous formats (<b>PDF, Word DOCX, Plain Text</b>), applies schema-bound LLM extraction chains,
-                    drafts empathetic customer emails, and prepares internal managerial memos.
+                    This application is developed as part of the IIT Patna GenAI Development Program Final Evaluation Project (Batch 1). 
+                    It implements an AI-powered customer complaint and case processing workflow designed to ingest, extract, 
+                    and coordinate automated business responses locally.
                 </p>
-                <b style="color:{t_text}; font-size:0.80rem;">Pipeline Stages:</b>
+                <b style="color:{t_text}; font-size:0.80rem;">Core Pipeline Stages:</b>
                 <ol style="font-size:0.75rem; color:{t_subtext}; line-height:1.45; padding-left:14px; margin-top:2px;">
-                    <li><b>Document Loader</b>: Extracts raw text bodies and metadata from ingested files.</li>
-                    <li><b>Structured Extraction Chain</b>: Binds Pydantic schemas to LLM function calling.</li>
-                    <li><b>Response Email Chain</b>: Generates formal customer communications (skipped if data is insufficient).</li>
-                    <li><b>Briefing Memo Chain</b>: Prepares root-cause executive summaries.</li>
+                    <li><b>Document Ingestion</b>: Reads heterogeneous local files (.pdf, .docx, .txt) in batches.</li>
+                    <li><b>Structured Extraction</b>: Uses Pydantic schemas and LangChain to capture metadata, status, and priorities.</li>
+                    <li><b>Automated Response Generation</b>: Drafts professional customer emails conditionally when valid contact info exists.</li>
+                    <li><b>Management Summary</b>: Compiles internal briefing memos and executive overviews.</li>
                 </ol>
             </div>
             """,
@@ -1116,19 +1216,19 @@ elif current_page == PAGE_ABOUT:
         st.markdown(
             f"""
             <div style="background:{t_surface}; border:1px solid {t_border}; border-radius:6px; padding:14px 16px;">
-                <b style="color:{t_text}; font-size:0.85rem;">System Specifications</b>
+                <b style="color:{t_text}; font-size:0.85rem;">Technical Specifications</b>
                 <ul style="list-style:none; padding:0; font-size:0.75rem; color:{t_subtext}; line-height:1.5; margin-top:4px;">
-                    <li><b>Platform Release:</b> v1.0.0</li>
-                    <li><b>Core Framework:</b> Streamlit & Python</li>
-                    <li><b>LLM Framework:</b> LangChain Expression Language (LCEL)</li>
-                    <li><b>Persistence:</b> Local File Manifests (SHA-256 Hashing)</li>
-                    <li><b>Access Guard:</b> Administrative Session Gate</li>
+                    <li><b>Program:</b> IIT Patna GenAI Development</li>
+                    <li><b>Core Framework:</b> Python & Streamlit</li>
+                    <li><b>Schema Binding:</b> Pydantic Structured Outputs</li>
+                    <li><b>Persistence & Caching:</b> SHA-256 File Manifests</li>
+                    <li><b>Security Gate:</b> 1-Hour TTL Cookie Session Guard</li>
                 </ul>
                 <hr style="border:none; border-top:1px solid {t_border}; margin:6px 0;">
-                <b style="font-size:0.78rem; color:{t_text};">Deterministic Cache Strategy</b>
+                <b style="font-size:0.78rem; color:{t_text};">Evaluation & Compliance</b>
                 <p style="font-size:0.73rem; color:{t_subtext}; margin-top:2px;">
-                    Each input file is hashed via SHA-256. If a document hash matches the registry and artifacts exist on disk, 
-                    the pipeline reuses previous extractions at zero latency.
+                    Built with modular architecture, robust local error handling, and strict completeness validation 
+                    to ensure production-grade reliability without external paid dependencies.
                 </p>
             </div>
             """,
@@ -1138,4 +1238,4 @@ elif current_page == PAGE_ABOUT:
 # -------------------------------------------------------------
 # FIXED BOTTOM FOOTER
 # -------------------------------------------------------------
-st.markdown('<div class="app-footer">AI Case Processing Engine &nbsp;|&nbsp; Enterprise Release: <b>v1.0.0</b></div>', unsafe_allow_html=True)
+st.markdown('<div class="app-footer">AI Case Processing Engine &nbsp;|&nbsp; Release: <b>v1.0.0</b></div>', unsafe_allow_html=True)
