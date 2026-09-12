@@ -1,9 +1,10 @@
 import os
 import json
-import math
+import time
 from pathlib import Path
 import pandas as pd
 import streamlit as st
+import extra_streamlit_components as stx
 
 from src.config import BASE_DIR, CONFIG
 from src.pipeline import BatchProcessingPipeline
@@ -17,11 +18,33 @@ st.set_page_config(
 )
 
 # -------------------------------------------------------------
+# 1-HOUR PERSISTENT AUTHENTICATION (COOKIES + SESSION STATE)
+# -------------------------------------------------------------
+AUTH_USER = os.getenv("APP_USER", "admin")
+AUTH_PASS = os.getenv("APP_PASSWORD", "secretpassword123")
+SESSION_MAX_AGE_SECONDS = 3600  # 1 Hour TTL
+
+cookie_manager = stx.CookieManager()
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+auth_cookie = cookie_manager.get("auth_session")
+current_ts = int(time.time())
+
+if auth_cookie and isinstance(auth_cookie, dict):
+    saved_user = auth_cookie.get("user")
+    login_ts = auth_cookie.get("timestamp", 0)
+
+    if saved_user == AUTH_USER and (current_ts - login_ts) < SESSION_MAX_AGE_SECONDS:
+        st.session_state.authenticated = True
+    else:
+        cookie_manager.delete("auth_session")
+        st.session_state.authenticated = False
+
+# -------------------------------------------------------------
 # SESSION STATE INITIALIZATION
 # -------------------------------------------------------------
-if "app_theme" not in st.session_state:
-    st.session_state.app_theme = "Light"
-
 PAGE_MAIN = "📊 Main Dashboard"
 PAGE_REPO = "📁 Manage & Ingest Files"
 PAGE_ABOUT = "ℹ️ About Platform"
@@ -30,36 +53,25 @@ PAGE_OPTIONS = [PAGE_MAIN, PAGE_REPO, PAGE_ABOUT]
 if "active_page" not in st.session_state:
     st.session_state.active_page = PAGE_MAIN
 
-# -------------------------------------------------------------
-# DYNAMIC THEME COLOR TOKENS
-# -------------------------------------------------------------
-if st.session_state.app_theme == "Light":
-    t_bg = "#f8fafc"
-    t_surface = "#ffffff"
-    t_surface_alt = "#f1f5f9"
-    t_border = "#e2e8f0"
-    t_text = "#0f172a"
-    t_subtext = "#64748b"
-    t_divider = "#f1f5f9"
-    t_metric_bg = "#ffffff"
-    t_badge_proc = ("#dcfce7", "#15803d", "#bbf7d0")
-    t_badge_unpr = ("#f1f5f9", "#475569", "#e2e8f0")
-    t_badge_err = ("#fee2e2", "#b91c1c", "#fecaca")
-else:
-    t_bg = "#090d16"
-    t_surface = "#111827"
-    t_surface_alt = "#1f2937"
-    t_border = "rgba(255, 255, 255, 0.1)"
-    t_text = "#f9fafb"
-    t_subtext = "#9ca3af"
-    t_divider = "rgba(255, 255, 255, 0.07)"
-    t_metric_bg = "rgba(255, 255, 255, 0.03)"
-    t_badge_proc = ("rgba(34, 197, 94, 0.15)", "#22c55e", "rgba(34, 197, 94, 0.3)")
-    t_badge_unpr = ("rgba(156, 163, 175, 0.15)", "#9ca3af", "rgba(156, 163, 175, 0.3)")
-    t_badge_err = ("rgba(239, 68, 68, 0.15)", "#ef4444", "rgba(239, 68, 68, 0.3)")
+if "main_uploader_key" not in st.session_state:
+    st.session_state.main_uploader_key = 0
 
 # -------------------------------------------------------------
-# CLEAN CSS (MODERN THEME, COMPACT INTERFACE)
+# FIXED PRODUCTION THEME PALETTE
+# -------------------------------------------------------------
+t_bg = "#f8fafc"
+t_surface = "#ffffff"
+t_border = "#e2e8f0"
+t_text = "#0f172a"
+t_subtext = "#64748b"
+t_divider = "#f1f5f9"
+t_metric_bg = "#ffffff"
+t_badge_proc = ("#dcfce7", "#15803d", "#bbf7d0")
+t_badge_unpr = ("#f1f5f9", "#475569", "#e2e8f0")
+t_badge_err = ("#fee2e2", "#b91c1c", "#fecaca")
+
+# -------------------------------------------------------------
+# CLEAN CSS (RESPONSIVE INTERFACE & TABLE EXPANSION)
 # -------------------------------------------------------------
 st.markdown(
     f"""
@@ -111,34 +123,18 @@ st.markdown(
         font-weight: 700 !important;
     }}
 
-    .status-pill {{
-        font-size: 0.7rem;
-        padding: 2px 7px;
-        border-radius: 9999px;
-        font-weight: 600;
-        display: inline-block;
-        letter-spacing: 0.2px;
-    }}
-    .status-processed {{
-        background-color: {t_badge_proc[0]};
-        color: {t_badge_proc[1]};
-        border: 1px solid {t_badge_proc[2]};
-    }}
-    .status-unprocessed {{
-        background-color: {t_badge_unpr[0]};
-        color: {t_badge_unpr[1]};
-        border: 1px solid {t_badge_unpr[2]};
-    }}
-    .status-errored {{
-        background-color: {t_badge_err[0]};
-        color: {t_badge_err[1]};
-        border: 1px solid {t_badge_err[2]};
+    div[data-testid="stDataFrame"] {{
+        width: 100% !important;
+        border: 1px solid {t_border} !important;
+        border-radius: 8px !important;
+        overflow: hidden !important;
     }}
 
-    .table-row-divider {{
-        margin: 2px 0 !important;
-        border: none !important;
-        border-top: 1px solid {t_divider} !important;
+    div[data-testid="stButton"] button {{
+        padding: 2px 8px !important;
+        min-height: 28px !important;
+        font-size: 0.75rem !important;
+        border-radius: 4px !important;
     }}
 
     .app-footer {{
@@ -162,14 +158,8 @@ st.markdown(
 )
 
 # -------------------------------------------------------------
-# AUTHENTICATION GATEWAY
+# LOGIN FORM (SETS 1-HOUR EXPIRING COOKIE)
 # -------------------------------------------------------------
-AUTH_USER = os.getenv("APP_USER", "admin")
-AUTH_PASS = os.getenv("APP_PASSWORD", "secretpassword123")
-
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
 def login_form():
     col1, col2, col3 = st.columns([1, 1.1, 1])
     with col2:
@@ -178,7 +168,7 @@ def login_form():
             f"""
             <div style="background:{t_surface}; border:1px solid {t_border}; border-radius:8px; padding:20px 24px;">
                 <h4 style="margin-bottom:2px; color:{t_text};">🔐 Enterprise Case Portal</h4>
-                <p style="color:{t_subtext}; font-size:0.8rem; margin-bottom:12px;">Sign in with administrative credentials.</p>
+                <p style="color:{t_subtext}; font-size:0.8rem; margin-bottom:12px;">Sign in with administrative credentials. Sessions persist for 1 hour.</p>
             </div>
             """,
             unsafe_allow_html=True
@@ -190,7 +180,19 @@ def login_form():
 
             if submit_login:
                 if username_input == AUTH_USER and password_input == AUTH_PASS:
+                    cookie_payload = {
+                        "user": AUTH_USER,
+                        "timestamp": int(time.time())
+                    }
+                    cookie_manager.set(
+                        "auth_session", 
+                        cookie_payload, 
+                        max_age=SESSION_MAX_AGE_SECONDS,
+                        key="set_auth_cookie"
+                    )
                     st.session_state.authenticated = True
+                    st.toast("Authenticated! Session valid for 1 hour.")
+                    time.sleep(0.3)
                     st.rerun()
                 else:
                     st.error("Authentication failed: Invalid credentials.")
@@ -235,17 +237,7 @@ def load_error_log() -> dict:
             return {}
     return {}
 
-def open_inspector(filename):
-    st.session_state.selected_doc = filename
-    st.session_state.active_tab = TAB_INS
-    st.session_state.active_page = PAGE_MAIN
-    st.rerun()
-
-def delete_file_and_artifacts(filename):
-    target_path = data_dir / filename
-    if target_path.exists():
-        target_path.unlink()
-
+def clear_artifacts_only(filename):
     stem = get_base_filename(filename)
     for art in [
         structured_dir / f"{stem}.json",
@@ -286,13 +278,18 @@ def delete_file_and_artifacts(filename):
         except Exception:
             pass
 
+def delete_file_and_artifacts(filename):
+    target_path = data_dir / filename
+    if target_path.exists():
+        target_path.unlink()
+    clear_artifacts_only(filename)
+
     if st.session_state.selected_doc == filename:
         st.session_state.selected_doc = None
-    st.rerun()
 
-def get_file_status(filename, errors_dict):
+def get_file_status_label(filename, errors_dict):
     if filename in errors_dict:
-        return "errored", "status-errored", "Errored"
+        return "⚠️ Errored"
 
     stem = get_base_filename(filename)
     json_file = structured_dir / f"{stem}.json"
@@ -300,8 +297,8 @@ def get_file_status(filename, errors_dict):
     summary_file = summaries_dir / f"{stem}_summary.txt"
 
     if json_file.exists() and email_file.exists() and summary_file.exists():
-        return "processed", "status-processed", "Processed"
-    return "unprocessed", "status-unprocessed", "Unprocessed"
+        return "✅ Processed"
+    return "⏳ Unprocessed"
 
 error_log = load_error_log()
 
@@ -313,7 +310,7 @@ with st.sidebar:
         f"""
         <div style="margin-bottom: 12px;">
             <div style="font-size: 1.15rem; font-weight: 800; color: {t_text};">⚡ AI Case Engine</div>
-            <div style="font-size: 0.72rem; color: {t_subtext};">Release v1.0.0 &bull; Operator: <b>{AUTH_USER}</b></div>
+            <div style="font-size: 0.72rem; color: {t_subtext};">Session active (1h TTL) &bull; <b>{AUTH_USER}</b></div>
         </div>
         """,
         unsafe_allow_html=True
@@ -331,23 +328,16 @@ with st.sidebar:
 
     st.markdown("---")
     
-    col_th, col_lg = st.columns([1, 1])
-    with col_th:
-        is_dark = (st.session_state.app_theme == "Dark")
-        theme_toggle = st.toggle("🌙 Dark", value=is_dark, key="theme_toggle_btn")
-        new_theme = "Dark" if theme_toggle else "Light"
-        if new_theme != st.session_state.app_theme:
-            st.session_state.app_theme = new_theme
-            st.rerun()
-    with col_lg:
-        if st.button("Log Out", key="sidebar_logout_btn", use_container_width=True):
-            st.session_state.authenticated = False
-            st.rerun()
+    if st.button("Log Out", key="sidebar_logout_btn", use_container_width=True):
+        cookie_manager.delete("auth_session")
+        st.session_state.authenticated = False
+        time.sleep(0.2)
+        st.rerun()
 
 # -------------------------------------------------------------
-# INTERACTIVE DATAFRAME COMPONENT (PRIORITY TAGS INSTEAD OF CHECKBOXES)
+# RESPONSIVE & HEADER-SORTABLE DATAFRAME COMPONENT (PAGE 1)
 # -------------------------------------------------------------
-def render_interactive_table(df_subset, table_key):
+def render_sortable_dashboard_table(df_subset, table_key):
     if df_subset.empty:
         st.info("No matching records found in this view.")
         return
@@ -359,19 +349,18 @@ def render_interactive_table(df_subset, table_key):
     available_cols = [c for c in cols_to_display if c in df_subset.columns]
     display_df = df_subset[available_cols].copy()
 
-    # Map boolean values to visual priority badges
     if "escalation_required" in display_df.columns:
         display_df["escalation_required"] = display_df["escalation_required"].map(
             lambda x: "🚨 Escalated" if bool(x) else "🟢 Standard"
         )
 
     col_config = {
-        "file_name": st.column_config.TextColumn("File Name", help="Document name in storage", width="medium"),
-        "customer_name": st.column_config.TextColumn("Customer", width="medium"),
-        "complaint_category": st.column_config.TextColumn("Category", width="medium"),
-        "case_status": st.column_config.TextColumn("Status", width="small"),
-        "escalation_required": st.column_config.TextColumn("Priority / Escalation", help="High-priority manager review status", width="small"),
-        "latency_seconds": st.column_config.NumberColumn("Latency", format="%.2fs", width="small"),
+        "file_name": st.column_config.TextColumn("File Name", help="Click header to sort by File Name"),
+        "customer_name": st.column_config.TextColumn("Customer", help="Click header to sort by Customer"),
+        "complaint_category": st.column_config.TextColumn("Category", help="Click header to sort by Category"),
+        "case_status": st.column_config.TextColumn("Status", help="Click header to sort by Case Status"),
+        "escalation_required": st.column_config.TextColumn("Priority", help="Click header to sort by Priority"),
+        "latency_seconds": st.column_config.NumberColumn("Latency", format="%.2fs", help="Click header to sort by Latency"),
     }
 
     st.dataframe(
@@ -379,8 +368,8 @@ def render_interactive_table(df_subset, table_key):
         column_config=col_config,
         use_container_width=True,
         hide_index=True,
-        height=320,
-        key=f"df_view_{table_key}"
+        height=360,
+        key=f"df_sortable_{table_key}"
     )
 
 # =============================================================
@@ -413,7 +402,7 @@ if st.session_state.active_page == PAGE_MAIN:
 
         st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
 
-        # Search Bar & Tabs
+        # Search Bar & Navigation Tabs
         c_search, c_tabs = st.columns([3.5, 6.5])
         with c_search:
             raw_query = st.text_input(
@@ -434,8 +423,11 @@ if st.session_state.active_page == PAGE_MAIN:
                 index=TAB_OPTIONS.index(st.session_state.active_tab),
                 horizontal=True,
                 label_visibility="collapsed",
-                key="active_tab"
+                key="active_tab_selector"
             )
+            if active_tab != st.session_state.active_tab:
+                st.session_state.active_tab = active_tab
+                st.rerun()
 
         filtered_df = df_report.copy()
         if not filtered_df.empty and st.session_state.search_query.strip():
@@ -448,10 +440,10 @@ if st.session_state.active_page == PAGE_MAIN:
             filtered_df = filtered_df[mask]
 
         # Tab Views
-        if active_tab == TAB_ALL:
+        if st.session_state.active_tab == TAB_ALL:
             col_hdr, col_dl = st.columns([8.8, 1.2])
             with col_hdr:
-                st.caption(f"Showing all processed cases ({len(filtered_df)} total)")
+                st.caption(f"Showing all processed cases ({len(filtered_df)} total) &bull; Click any header to sort")
             with col_dl:
                 if not filtered_df.empty:
                     st.download_button(
@@ -461,20 +453,20 @@ if st.session_state.active_page == PAGE_MAIN:
                         mime="text/csv",
                         use_container_width=True
                     )
-            render_interactive_table(filtered_df, table_key="all_cases")
+            render_sortable_dashboard_table(filtered_df, table_key="all_cases")
 
-        elif active_tab == TAB_ESC:
-            st.caption("🚨 Priority Escalation Queue (Managerial & Legal Attention)")
+        elif st.session_state.active_tab == TAB_ESC:
+            st.caption("🚨 Priority Escalation Queue &bull; Click any header to sort")
             df_escalated = filtered_df[filtered_df["escalation_required"] == True] if not filtered_df.empty and "escalation_required" in filtered_df else pd.DataFrame()
-            render_interactive_table(df_escalated, table_key="esc_cases")
+            render_sortable_dashboard_table(df_escalated, table_key="esc_cases")
 
-        elif active_tab == TAB_ACT:
-            st.caption("⏳ Active Work Queue (Open & In Progress)")
+        elif st.session_state.active_tab == TAB_ACT:
+            st.caption("⏳ Active Work Queue &bull; Click any header to sort")
             df_active = filtered_df[filtered_df["case_status"].isin(["Open", "In Progress"])] if not filtered_df.empty and "case_status" in filtered_df else pd.DataFrame()
-            render_interactive_table(df_active, table_key="act_cases")
+            render_sortable_dashboard_table(df_active, table_key="act_cases")
 
-        elif active_tab == TAB_ERR:
-            st.caption("⚠️ Document Processing Exceptions & Parser Errors")
+        elif st.session_state.active_tab == TAB_ERR:
+            st.caption("⚠️ Document Processing Exceptions &bull; Click headers to sort")
             if not error_log:
                 st.success("Zero exceptions registered. All ingested documents processed cleanly.")
             else:
@@ -491,27 +483,29 @@ if st.session_state.active_page == PAGE_MAIN:
                 st.dataframe(
                     err_df,
                     column_config={
-                        "File Name": st.column_config.TextColumn("File Name", width="medium"),
-                        "Exception Reason": st.column_config.TextColumn("Exception Trace", width="large"),
+                        "File Name": st.column_config.TextColumn("File Name", help="Sort by file name"),
+                        "Exception Reason": st.column_config.TextColumn("Exception Trace", help="Sort by exception message"),
                     },
                     use_container_width=True,
                     hide_index=True,
                     height=280
                 )
 
-        elif active_tab == TAB_INS:
+        elif st.session_state.active_tab == TAB_INS:
             if not all_files:
                 st.info("No processed artifacts available for inspection.")
             else:
-                col_sel, _ = st.columns([4, 6])
+                col_sel, col_stat = st.columns([5, 5])
                 with col_sel:
                     selected_index = all_files.index(st.session_state.selected_doc) if st.session_state.selected_doc in all_files else 0
                     selected_file = st.selectbox("Inspect Document:", all_files, index=selected_index, label_visibility="collapsed", key="doc_selector")
                     st.session_state.selected_doc = selected_file
+                with col_stat:
+                    st.caption(f"Currently viewing artifacts for: **{st.session_state.selected_doc}**")
 
                 if selected_file:
                     stem = get_base_filename(selected_file)
-                    with st.container(height=380):
+                    with st.container(height=420):
                         col_json, col_text = st.columns([1, 1])
                         with col_json:
                             st.markdown(f"<span style='font-size:0.8rem; font-weight:700; color:{t_subtext};'>EXTRACTED JSON DATA</span>", unsafe_allow_html=True)
@@ -572,14 +566,17 @@ elif st.session_state.active_page == PAGE_REPO:
         uploaded_files = st.file_uploader(
             "Upload Documents (.pdf, .docx, .txt)",
             type=["pdf", "docx", "txt"],
-            accept_multiple_files=True
+            accept_multiple_files=True,
+            key=f"main_ingest_uploader_{st.session_state.main_uploader_key}"
         )
         if uploaded_files:
             for file in uploaded_files:
                 target_path = data_dir / file.name
                 with open(target_path, "wb") as f:
                     f.write(file.getbuffer())
-            st.success(f"Saved {len(uploaded_files)} file(s) to `{data_dir.name}/`")
+            st.toast(f"Saved {len(uploaded_files)} file(s) to `{data_dir.name}/`")
+            st.session_state.main_uploader_key += 1
+            st.rerun()
 
     with col_pipeline_run:
         st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
@@ -614,6 +611,7 @@ elif st.session_state.active_page == PAGE_REPO:
 
     st.markdown("<hr style='margin:10px 0; border:none; border-top:1px solid " + t_border + ";'>", unsafe_allow_html=True)
 
+    # Repository Listing & Multi-Row Selection Table
     existing_files = sorted([f.name for f in data_dir.iterdir() if f.is_file()])
 
     col_rep_head, col_rep_search = st.columns([5, 5])
@@ -636,40 +634,62 @@ elif st.session_state.active_page == PAGE_REPO:
     if not filtered_repo_files:
         st.info("No documents found matching query.")
     else:
-        h_ficon, h_fname, h_fstatus, h_factions = st.columns([0.4, 4.6, 2, 3])
-        h_fname.markdown(f"<span style='font-size:0.72rem; font-weight:700; color:{t_subtext};'>FILE NAME</span>", unsafe_allow_html=True)
-        h_fstatus.markdown(f"<span style='font-size:0.72rem; font-weight:700; color:{t_subtext};'>STATUS</span>", unsafe_allow_html=True)
-        h_factions.markdown(f"<span style='font-size:0.72rem; font-weight:700; color:{t_subtext};'>ACTIONS</span>", unsafe_allow_html=True)
-        st.markdown(f"<hr style='margin:1px 0 4px 0; border:none; border-top:1px solid {t_border};'>", unsafe_allow_html=True)
+        st.caption("Select one or more rows directly using the checkboxes, or click headers to sort.")
 
-        with st.container(height=340):
-            for name in filtered_repo_files:
-                _, badge_class, label = get_file_status(name, error_log)
-                c_icon, c_name, c_status, c_actions = st.columns([0.4, 4.6, 2, 3])
+        repo_rows = []
+        for name in filtered_repo_files:
+            file_path = data_dir / name
+            size_kb = round(file_path.stat().st_size / 1024, 2) if file_path.exists() else 0.0
+            status_label = get_file_status_label(name, error_log)
+            file_ext = Path(name).suffix.lower()
 
-                with c_icon:
-                    st.markdown("<span style='font-size:0.8rem;'>📄</span>", unsafe_allow_html=True)
-                with c_name:
-                    st.markdown(f"<span class='table-cell-text' style='font-weight:600; color:{t_text}; font-family:monospace;'>{name}</span>", unsafe_allow_html=True)
-                with c_status:
-                    st.markdown(f"<span class='status-pill {badge_class}'>{label}</span>", unsafe_allow_html=True)
-                with c_actions:
-                    col_act_rep, col_act_del = st.columns([1, 1])
-                    with col_act_rep:
-                        with st.popover("Replace", use_container_width=True):
-                            st.caption(f"Replace **{name}**")
-                            rep_file = st.file_uploader("Select file", type=["pdf", "docx", "txt"], key=f"repo_page_rep_{name}", label_visibility="collapsed")
-                            if rep_file is not None:
-                                target_path = data_dir / name
-                                with open(target_path, "wb") as f:
-                                    f.write(rep_file.getbuffer())
-                                delete_file_and_artifacts(name)
-                                st.toast(f"Replaced {name}")
-                                st.rerun()
-                    with col_act_del:
-                        if st.button("Delete", key=f"repo_page_del_{name}", use_container_width=True):
-                            delete_file_and_artifacts(name)
-                st.markdown("<hr class='table-row-divider'>", unsafe_allow_html=True)
+            repo_rows.append({
+                "File Name": name,
+                "Extension": file_ext,
+                "Size (KB)": size_kb,
+                "Status": status_label
+            })
+
+        repo_df = pd.DataFrame(repo_rows)
+
+        col_repo_config = {
+            "File Name": st.column_config.TextColumn("File Name", help="Click to sort by name"),
+            "Extension": st.column_config.TextColumn("Extension", help="Click to sort by file type"),
+            "Size (KB)": st.column_config.NumberColumn("Size (KB)", format="%.2f KB", help="Click to sort by file size"),
+            "Status": st.column_config.TextColumn("Status", help="Click to sort by processing status"),
+        }
+
+        # Multi-row selectable, responsive and header-sortable table
+        selection_event = st.dataframe(
+            repo_df,
+            column_config=col_repo_config,
+            use_container_width=True,
+            hide_index=True,
+            selection_mode="multi-row",
+            on_select="rerun",
+            height=320,
+            key="repo_interactive_dataframe"
+        )
+
+        selected_row_indices = selection_event.selection.rows
+        selected_files = [repo_df.iloc[i]["File Name"] for i in selected_row_indices] if selected_row_indices else []
+
+        st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
+        col_status_info, col_del_action = st.columns([7, 3])
+        with col_status_info:
+            if selected_files:
+                st.caption(f"Selected **{len(selected_files)}** file(s): `{', '.join(selected_files)}`")
+            else:
+                st.caption("No files selected in table.")
+
+        with col_del_action:
+            delete_btn_label = f"🗑️ Delete Selected ({len(selected_files)})" if selected_files else "🗑️ Delete Selected"
+            if st.button(delete_btn_label, disabled=(len(selected_files) == 0), type="primary", use_container_width=True):
+                for f in selected_files:
+                    delete_file_and_artifacts(f)
+                st.toast(f"Deleted {len(selected_files)} file(s) from storage.")
+                time.sleep(0.3)
+                st.rerun()
 
 # =============================================================
 # PAGE 3: ABOUT PAGE
